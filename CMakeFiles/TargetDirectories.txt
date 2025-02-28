@@ -1,0 +1,7 @@
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/CMakeFiles/lab3.dir
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/CMakeFiles/edit_cache.dir
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/CMakeFiles/rebuild_cache.dir
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/src/CMakeFiles/cudaLib.dir
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/src/CMakeFiles/cpuLib.dir
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/src/CMakeFiles/edit_cache.dir
+/mnt/c/Users/conor/source/repos/texashodlr/CUDA_learnin/cuda-assignment-3-texashodlr/src/CMakeFiles/rebuild_cache.dir
