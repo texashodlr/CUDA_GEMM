@@ -167,7 +167,7 @@
 	 */
 	extern int runGpuConv (int argc, char ** argv);
 
-	extern int executeGpuConv(TensorShape iShape, TensorShape fShape,
+	extern uint64_t executeGpuConv(TensorShape iShape, TensorShape fShape,
 		TensorShape& oShape, ConvLayerArgs args);
 	/**
 	 * @brief 

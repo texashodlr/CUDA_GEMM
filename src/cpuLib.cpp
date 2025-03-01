@@ -490,7 +490,6 @@ int runCpuConv (int argc, char ** argv) {
 	TensorShape fShape = AlexL1_FilterShape;
 	TensorShape oShape;
 	ConvLayerArgs convArgs = AlexL1_ConvArgs;
-
 	executeCpuConv (iShape, fShape, oShape, convArgs);
 	return 0;
 }
@@ -525,10 +524,16 @@ int executeCpuConv (TensorShape iShape, TensorShape fShape,
 		return -1;
 	}
 
-	std::cout << "OutShape : " << oShape << " \n";
+	//std::cout << "OutShape : " << oShape << " \n";
 	out = (float *) malloc (tensorSize(oShape) * sizeof(float));
-	std::cout << "Bias[0] = " << bias[0] << "\n";
+	//std::cout << "Bias[0] = " << bias[0] << "\n";
+	
+	auto start = std::chrono::high_resolution_clock::now();
 	convLayer_cpu(in, iShape, filter, fShape, bias, out, oShape, args);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
+
 
 	free(in);
 	free(filter);
@@ -570,9 +575,14 @@ float* executeCpuConv2(TensorShape iShape, TensorShape fShape,
 		exit;
 	}
 
-	std::cout << "OutShape : " << oShape << " \n";
+	//std::cout << "OutShape : " << oShape << " \n";
 	out = (float*)malloc(tensorSize(oShape) * sizeof(float));
+
+	auto start = std::chrono::high_resolution_clock::now();
 	convLayer_cpu(in, iShape, filter, fShape, bias, out, oShape, args);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
 
 	free(in);
 	free(filter);
@@ -615,7 +625,6 @@ int convLayer_cpu( float * input, TensorShape iShape,
 									uint32_t in_idx = ((n * iShape.channels + k) * iShape.height + in_h) * iShape.width + in_w;
 									uint32_t filter_idx = ((m * fShape.channels + k) * fShape.height + i) * fShape.width + j;
 									//uint32_t filter_idx = ((m * fShape.channels + k) * fShape.height + i) * fShape.width + j;
-
 									output[out_idx] += input[in_idx] * filter[filter_idx];
 								}
 							}
@@ -657,17 +666,30 @@ void matMulNaiveCpu (int N, int *a, int *b, int *c) {
 
 int runCpuGemm (int argc, char ** argv) {
 
-	TensorShape aShape = {1, 1, 6, 4};
-	TensorShape bShape = {1, 1, 4, 8};
+	for (uint32_t BatchSize = 1; BatchSize < 4; ++BatchSize) {
+		TensorShape aShape = { BatchSize, 1, 1, 4096 };
+		TensorShape bShape = { 1, 1, 4096, 4096 };
+		TensorShape cShape;
+		GemmLayerArgs args = { 2, 2, 1 };
+		std::cout << "Executing GEMM with BatchSize: " << BatchSize << "\n";
+		executeCpuGemm_v2(aShape, bShape, cShape, args, BatchSize);
+	}
+	return 0;
+}
+int runCpuGemm1(int argc, char** argv) {
+
+	TensorShape aShape = { 1, 1, 6, 4 };
+	TensorShape bShape = { 1, 1, 4, 8 };
 	TensorShape cShape;
-	GemmLayerArgs args = {2, 2, 1};
+	GemmLayerArgs args = { 2, 2, 1 };
 
 	executeCpuGemm(aShape, bShape, cShape, args);
 	return 0;
 }
 
-int executeCpuGemm (TensorShape aShape, TensorShape bShape, 
-	TensorShape & cShape, GemmLayerArgs args) {
+
+int executeCpuGemm_v1(TensorShape aShape, TensorShape bShape, 
+	TensorShape & cShape, GemmLayerArgs args, uint32_t BatchSize) {
 
 	if (aShape.width != bShape.height || aShape.channels != bShape.channels 
 		|| aShape.count != bShape.count) {
@@ -678,7 +700,7 @@ int executeCpuGemm (TensorShape aShape, TensorShape bShape,
 	cShape.height = aShape.height;
 	cShape.width = bShape.width;
 	cShape.channels = aShape.channels;
-	cShape.count = aShape.count;
+	cShape.count = BatchSize;
 
 	float * a = nullptr;
 	float * b = nullptr;
@@ -688,14 +710,43 @@ int executeCpuGemm (TensorShape aShape, TensorShape bShape,
 
 	float * c = (float *) malloc(tensorSize(cShape) * sizeof(float));
 
-	gemmLayer_cpu (a, aShape, b, bShape, c, cShape, args);
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_cpu(a, aShape, b, bShape, c, cShape, args);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
+
+	return 0;
+}
 
 
-	std::cout << "Printing CPU C!\n";
-	int cSize = cShape.height * cShape.width;
-	for (int k = 1000; k < 1020;++k) {
-		std::cout << "C[" << k << "]: " << c[k] << "\n";
+int executeCpuGemm(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args) {
+
+	if (aShape.width != bShape.height || aShape.channels != bShape.channels
+		|| aShape.count != bShape.count) {
+		std::cout << "Dimensions dont match : " << aShape << " x " << bShape << " \n";
+		return -1;
 	}
+
+	cShape.height = aShape.height;
+	cShape.width = bShape.width;
+	cShape.channels = aShape.channels;
+	cShape.count = aShape.count;
+
+	float* a = nullptr;
+	float* b = nullptr;
+
+	makeTensor(&a, aShape);
+	makeTensor(&b, bShape);
+
+	float* c = (float*)malloc(tensorSize(cShape) * sizeof(float));
+
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_cpu(a, aShape, b, bShape, c, cShape, args);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
 
 	return 0;
 }
@@ -750,5 +801,80 @@ int gemmLayer_cpu (float * a, TensorShape aShape,
 		}
 		++ tileId;
     }
+	return 0;
+}
+
+
+int executeCpuGemm_v2(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
+
+	cShape.height = aShape.height;
+	cShape.width = bShape.width;
+	cShape.channels = aShape.channels;
+	cShape.count = BatchSize;
+
+	float* a = nullptr;
+	float* b = nullptr;
+
+	makeTensor(&a, aShape);
+	makeTensor(&b, bShape);
+
+	float* c = (float*)malloc(tensorSize(cShape) * sizeof(float));
+
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_cpu_batchsize(a, aShape, b, bShape, c, cShape, args);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
+
+	return 0;
+}
+
+int gemmLayer_cpu_batchsize(float* a, TensorShape aShape,
+	float* b, TensorShape bShape,
+	float* c, TensorShape& cShape,
+	GemmLayerArgs& args) {
+
+	int tilesAlongW = (cShape.width + args.tileW - 1) / args.tileW;
+	int tilesAlongH = (cShape.height + args.tileH - 1) / args.tileH;
+	int subTilesAlongK = (aShape.width + args.tileH - 1) / args.tileH;
+
+	// Loop over batches
+	for (uint32_t batch = 0; batch < cShape.count; ++batch) {
+		int batchOffsetA = batch * aShape.channels * aShape.height * aShape.width;
+		int batchOffsetB = (bShape.count == 1) ? 0 : batch * bShape.channels * bShape.height * bShape.width;
+		int batchOffsetC = batch * cShape.channels * cShape.height * cShape.width;
+
+		int tileId = 0;
+		while (tileId < tilesAlongW * tilesAlongH) {
+			int offsetH = (tileId / tilesAlongW) * args.tileH;
+			int offsetW = (tileId % tilesAlongW) * args.tileW;
+			int rowIdx, colIdx;
+
+			for (int subTile = 0; subTile < subTilesAlongK; ++subTile) {
+				for (int row = 0; row < args.tileH; ++row) {
+					for (int col = 0; col < args.tileW; ++col) {
+						rowIdx = row + offsetH;
+						colIdx = col + offsetW;
+
+						if (rowIdx < cShape.height && colIdx < cShape.width) {
+							if (subTile == 0)
+								c[batchOffsetC + IDX2R(rowIdx, colIdx, cShape.width)] = 0;
+
+							for (int subTileK = 0; subTileK < args.tileH; ++subTileK) {
+								int k = subTile * args.tileH + subTileK;
+								if (k < aShape.width) {
+									c[batchOffsetC + IDX2R(rowIdx, colIdx, cShape.width)] +=
+										a[batchOffsetA + IDX2R(rowIdx, k, aShape.width)] *
+										b[batchOffsetB + IDX2R(k, colIdx, bShape.width)];
+								}
+							}
+						}
+					}
+				}
+			}
+			++tileId;
+		}
+	}
 	return 0;
 }

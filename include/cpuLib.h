@@ -192,9 +192,19 @@
 	extern int executeCpuGemm (TensorShape aShape, TensorShape bShape, 
 		TensorShape & cShape, GemmLayerArgs args);
 
+	extern int executeCpuGemm_v1(TensorShape aShape, TensorShape bShape,
+		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
+
+	extern int executeCpuGemm_v2(TensorShape aShape, TensorShape bShape,
+		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
+
 	extern int gemmLayer_cpu (float * a, TensorShape aShape,
 		float * b, TensorShape bShape, float * c, TensorShape & cShape,
 		GemmLayerArgs & args);
+
+	extern int gemmLayer_cpu_batchsize(float* a, TensorShape aShape,
+		float* b, TensorShape bShape, float* c, TensorShape& cShape,
+		GemmLayerArgs& args);
 
 	void printTensor (float * t, TensorShape shape);
 
