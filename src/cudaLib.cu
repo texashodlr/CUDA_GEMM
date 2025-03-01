@@ -373,8 +373,8 @@ __global__ void convLayer_gpu_SM_DM_v3(float* input, TensorShape iShape, float* 
 int runGpuGemm (int argc, char ** argv) {
 
 	
-	uint32_t BatchSize = 1;
-	uint32_t fcc = 8192;
+	uint32_t BatchSize = 3;
+	uint32_t fcc = 4096;
 	//TensorShape aShape = { BatchSize, 1, 6, 4 };
 	//TensorShape bShape = { 1, 1, 4, 8 };
 	TensorShape aShape = { BatchSize, 1, 1, fcc };
@@ -382,10 +382,10 @@ int runGpuGemm (int argc, char ** argv) {
 	TensorShape cShape;
 	GemmLayerArgs args = { 2, 2, 1 };
 
-	evaluateGpuGemm_copy_speed(aShape, bShape, cShape, args, BatchSize);
+	//evaluateGpuGemm_copy_speed(aShape, bShape, cShape, args, BatchSize);
 	evaluateGpuGemm_copy(aShape, bShape, cShape, args, BatchSize);
-	evaluateGpuGemm_uvm(aShape, bShape, cShape, args, BatchSize);
-	executeCpuGemm_v1(aShape, bShape, cShape, args, BatchSize);
+	//evaluateGpuGemm_uvm(aShape, bShape, cShape, args, BatchSize);
+	//executeCpuGemm_v1(aShape, bShape, cShape, args, BatchSize);
 	return 0;
 }
 
@@ -561,8 +561,6 @@ __global__ void gemmLayer_gpu(float* a, TensorShape aShape, float* b, TensorShap
 int evaluateGpuGemm_copy_speed(TensorShape aShape, TensorShape bShape,
 	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
 
-	//cShape = { BatchSize, 1, 1, 4096 };
-
 	cShape.height = aShape.height;
 	cShape.width = bShape.width;
 	cShape.channels = aShape.channels;
@@ -603,17 +601,21 @@ int evaluateGpuGemm_copy_speed(TensorShape aShape, TensorShape bShape,
 	dim3 gridDim((cShape.width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE, 1, cShape.count); // 128x1x3
 	size_t sharedMemSize = 2 * GEMM_TILE_SIZE * GEMM_TILE_SIZE * sizeof(float);
 
-	std::cout << "SPEED(?) COPY GPU Starting!\n";
-	cudaEvent_t start, stop;
-	cudaEventCreate(&start); cudaEventCreate(&stop);
-	cudaEventRecord(start);
+	std::cout << "'Speed-up' COPY GPU Starting!\n";
+	cudaEvent_t start1, stop1;
+	cudaEventCreate(&start1); cudaEventCreate(&stop1);
+	cudaEventRecord(start1);
 	std::cout << "\tMemory Size: " << sharedMemSize << " Bytes! \n";
-	gemmLayer_gpu_speed << <gridDim, blockDim, sharedMemSize>> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_gpu_speed << <gridDim, blockDim, sharedMemSize >> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
 	//gemmLayer_gpu_v2 << <gridDim, blockDim >> > (d_a, aShape, d_b, bShape, d_c, cShape);
-	cudaEventRecord(stop);
-	cudaEventSynchronize(stop);
-	float ms; cudaEventElapsedTime(&ms, start, stop);
-	std::cout << "Copy Batch " << BatchSize << " Time: " << ms << " ms\n";
+	cudaEventRecord(stop1);
+	cudaEventSynchronize(stop1);
+	float ms; cudaEventElapsedTime(&ms, start1, stop1);
+	std::cout << "'Speed-up' COPY Batch " << BatchSize << " Time: " << ms << " ms\n";
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
 		std::cout << "Kernel Launch Error: " << cudaGetErrorString(err) << "\n";
@@ -665,10 +667,7 @@ int evaluateGpuGemm_copy (TensorShape aShape, TensorShape bShape,
 
 	/*C (out) Array initialization*/
 	float* h_c = (float*)malloc(tensorSize(cShape) * sizeof(float));
-	std::cout << "OutShape : " << cShape << " \n";
-	
 	/*CUDA Malloc for in, out, filter and bias*/
-
 	float* d_a, * d_b, * d_c;
 	cudaMalloc(&d_a, tensorSize(aShape) * sizeof(float));
 	cudaMalloc(&d_b, tensorSize(bShape) * sizeof(float));
@@ -683,17 +682,22 @@ int evaluateGpuGemm_copy (TensorShape aShape, TensorShape bShape,
 	dim3 blockDim(GEMM_TILE_SIZE,GEMM_TILE_SIZE);
 	dim3 gridDim((cShape.width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE, (cShape.height + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE);
 	
-	std::cout << "Copy GPU Starting!\n";
-	cudaEvent_t start, stop;
-	cudaEventCreate(&start); cudaEventCreate(&stop);
-	cudaEventRecord(start);
+	std::cout << "'Basic' COPY GPU Starting!\n";
+	cudaEvent_t start1, stop1;
+	cudaEventCreate(&start1); cudaEventCreate(&stop1);
+	cudaEventRecord(start1);
 	//std::cout << "Memory Size: " << sharedMemSize << " Bytes! \n";
+	auto start = std::chrono::high_resolution_clock::now();
 	gemmLayer_gpu << <gridDim, blockDim >> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
+	
 	//gemmLayer_gpu_v2 << <gridDim, blockDim >> > (d_a, aShape, d_b, bShape, d_c, cShape);
-	cudaEventRecord(stop);
-	cudaEventSynchronize(stop);
-	float ms; cudaEventElapsedTime(&ms, start, stop);
-	std::cout << "Copy Batch " << BatchSize << " Time: " << ms << " ms\n";
+	cudaEventRecord(stop1);
+	cudaEventSynchronize(stop1);
+	float ms; cudaEventElapsedTime(&ms, start1, stop1);
+	std::cout << "'Basic' COPY Batch " << BatchSize << " Time: " << ms << " ms\n";
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
 		std::cout << "Kernel Launch Error: " << cudaGetErrorString(err) << "\n";
@@ -756,12 +760,18 @@ int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 
 	/*gpuGemm Kernel Call*/
 	std::cout << "UVM GPU Starting!\n";
-	cudaEvent_t start, stop;
-	cudaEventCreate(&start); cudaEventCreate(&stop);
-	cudaEventRecord(start);
+	cudaEvent_t start1, stop1;
+	cudaEventCreate(&start1); cudaEventCreate(&stop1);
+	cudaEventRecord(start1);
+	auto start = std::chrono::high_resolution_clock::now();
 	gemmLayer_gpu_v2 << <gridDim, blockDim >> > (uvm_a, aShape, uvm_b, bShape, uvm_c, cShape);
-	cudaEventRecord(stop);
-	cudaEventSynchronize(stop);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
+	cudaEventRecord(stop1);
+	cudaEventSynchronize(stop1);
+	float ms; cudaEventElapsedTime(&ms, start1, stop1);
+	std::cout << "UVM Batch " << BatchSize << " Time: " << ms << " ms\n";
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
 		std::cout << "Kernel Launch Error: " << cudaGetErrorString(err) << "\n";
@@ -770,11 +780,6 @@ int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 	if (err != cudaSuccess) {
 		std::cout << "CUDA Error: " << cudaGetErrorString(err) << "\n";
 	}
-
-
-	float ms; cudaEventElapsedTime(&ms, start, stop);
-	std::cout << "UVM Batch " << BatchSize << " Time: " << ms << " ms\n";
-
 	cudaFree(uvm_a);
 	cudaFree(uvm_b);
 	cudaFree(uvm_c);
