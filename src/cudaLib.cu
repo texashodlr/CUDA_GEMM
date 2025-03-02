@@ -372,21 +372,26 @@ __global__ void convLayer_gpu_SM_DM_v3(float* input, TensorShape iShape, float* 
 
 int runGpuGemm (int argc, char ** argv) {
 
-	
+	//executeCpuGemm_v1(aShape, bShape, cShape, args, BatchSize);
 	uint32_t BatchSize = 3;
-	uint32_t fcc = 4096;
-	//TensorShape aShape = { BatchSize, 1, 6, 4 };
-	//TensorShape bShape = { 1, 1, 4, 8 };
-	TensorShape aShape = { BatchSize, 1, 1, fcc };
-	TensorShape bShape = { 1, 1, fcc, fcc };
+	TensorShape aShape = { BatchSize, 1, 1, 4096 };
+	TensorShape bShape = { 1, 1, 4096, 4096 };
 	TensorShape cShape;
 	GemmLayerArgs args = { 2, 2, 1 };
 
+	std::cout << "Executing GPU COPY GEMM with BatchSize: " << BatchSize << "\n";
+	float* gpu_copy = evaluateGpuGemm_copy_speed2(aShape, bShape, cShape, args, BatchSize);
 	//evaluateGpuGemm_copy_speed(aShape, bShape, cShape, args, BatchSize);
-	evaluateGpuGemm_copy(aShape, bShape, cShape, args, BatchSize);
-	//evaluateGpuGemm_uvm(aShape, bShape, cShape, args, BatchSize);
-	//executeCpuGemm_v1(aShape, bShape, cShape, args, BatchSize);
-	return 0;
+
+	std::cout << "Executing GPU UVM GEMM with BatchSize: " << BatchSize << "\n";
+	float* gpu_uvm = evaluateGpuGemm_uvm2(aShape, bShape, cShape, args, BatchSize);
+	
+	float* cpu_gemm = executeCpuGemm_v3(aShape, bShape, cShape, args);
+	int errorCount = 0;
+
+	errorCount = verifyVector_gemm(gpu_copy, gpu_uvm, cpu_gemm, (aShape.count*aShape.channels*aShape.height*bShape.width));
+	std::cout << "\nFound " << errorCount << " Errors...\n";
+	return errorCount;
 }
 
 
@@ -395,32 +400,15 @@ __global__ void gemmLayer_gpu_speed(float* a, TensorShape aShape,	float* b, Tens
 	extern __shared__ float shared[];
 	float* Mds = shared;
 	float* Nds = shared + GEMM_TILE_SIZE * GEMM_TILE_SIZE;
-
 	int bx = blockIdx.x;
 	//int by = blockIdx.y;
 	int bz = blockIdx.z;
-
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
-
 	int Row		= bz;
 	int Col		= bx * GEMM_TILE_SIZE + tx;
-
 	float pVal = 0;
 	int Width = aShape.width; //Inner Mat Dim
-
-	//Preloading Nds (filter)
-	/*
-	
-	if (ty == 0 && tx < GEMM_TILE_SIZE && Col < bShape.width) {
-		for (int k = 0; k < GEMM_TILE_SIZE; k++) {
-			Nds[k * GEMM_TILE_SIZE + tx] = b[k * bShape.width + Col];
-		}
-	}
-	__syncthreads();
-	
-	*/
-
 	if (Row < aShape.count) {
 		for (int p_idx = 0; p_idx < (Width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE; ++p_idx) {
 
@@ -433,7 +421,6 @@ __global__ void gemmLayer_gpu_speed(float* a, TensorShape aShape,	float* b, Tens
 					Nds[ty * GEMM_TILE_SIZE + tx] = 0.0f;
 				}
 			}
-
 			//Loading A into Mds
 			if (ty < GEMM_TILE_SIZE && (p_idx * GEMM_TILE_SIZE + tx) < aShape.width) {
 				Mds[ty*GEMM_TILE_SIZE+tx] = a[Row * Width + p_idx * GEMM_TILE_SIZE + tx];
@@ -441,9 +428,7 @@ __global__ void gemmLayer_gpu_speed(float* a, TensorShape aShape,	float* b, Tens
 			else {
 				Mds[ty * GEMM_TILE_SIZE + tx] = 0.0f;
 			}
-
 			__syncthreads();
-
 			for (int k = 0; k < GEMM_TILE_SIZE; ++k) {
 				pVal += Mds[ty * GEMM_TILE_SIZE + k] * Nds[k*GEMM_TILE_SIZE+tx];
 			}
@@ -464,19 +449,14 @@ __global__ void gemmLayer_gpu_v2(float* a, TensorShape aShape, float* b, TensorS
 	int bx = blockIdx.x;
 	//int by = blockIdx.y;
 	int bz = blockIdx.z; //Batching idx 0:2
-
-
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
-
 	int Row = bz;
 	int Col = bx * GEMM_TILE_SIZE + tx;
-
 	float pVal = 0;
 	int Width = aShape.width; //Inner Mat Dim
 	if (Row < aShape.count) {
 		for (int p_idx = 0; p_idx < (Width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE; ++p_idx) {
-
 			//Loading A into Mds
 			if (ty < GEMM_TILE_SIZE && (p_idx * GEMM_TILE_SIZE + tx) < aShape.width) {
 				Mds[ty][tx] = a[Row * Width + p_idx * GEMM_TILE_SIZE + tx];
@@ -484,7 +464,6 @@ __global__ void gemmLayer_gpu_v2(float* a, TensorShape aShape, float* b, TensorS
 			else {
 				Mds[ty][tx] = 0.0f;
 			}
-
 			//Loading B into Nds
 			if (Col < bShape.width && (p_idx * GEMM_TILE_SIZE + ty) < bShape.height) {
 				Nds[ty][tx] = b[(p_idx * GEMM_TILE_SIZE + ty) * bShape.width + Col];
@@ -492,9 +471,7 @@ __global__ void gemmLayer_gpu_v2(float* a, TensorShape aShape, float* b, TensorS
 			else {
 				Nds[ty][tx] = 0.0f;
 			}
-
 			__syncthreads();
-
 			for (int k = 0; k < GEMM_TILE_SIZE; ++k) {
 				pVal += Mds[ty][k] * Nds[k][tx];
 			}
@@ -511,23 +488,17 @@ __global__ void gemmLayer_gpu(float* a, TensorShape aShape, float* b, TensorShap
 	float* c, TensorShape cShape) {
 	__shared__ float Mds[GEMM_TILE_SIZE][GEMM_TILE_SIZE];
 	__shared__ float Nds[GEMM_TILE_SIZE][GEMM_TILE_SIZE];
-
 	int bx = blockIdx.x;
 	//int by = blockIdx.y;
 	int bz = blockIdx.z; //Batching idx 0:2
-
-
 	int tx = threadIdx.x;
 	int ty = threadIdx.y;
-
 	int Row = bz;
 	int Col = bx * GEMM_TILE_SIZE + tx;
-
 	float pVal = 0;
 	int Width = aShape.width; //Inner Mat Dim
 	if (Row < aShape.count) {
 		for (int p_idx = 0; p_idx < (Width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE; ++p_idx) {
-
 			//Loading A into Mds
 			if (ty < GEMM_TILE_SIZE && (p_idx * GEMM_TILE_SIZE + tx) < aShape.width) {
 				Mds[ty][tx] = a[Row * Width + p_idx * GEMM_TILE_SIZE + tx];
@@ -535,7 +506,6 @@ __global__ void gemmLayer_gpu(float* a, TensorShape aShape, float* b, TensorShap
 			else {
 				Mds[ty][tx] = 0.0f;
 			}
-
 			//Loading B into Nds
 			if (Col < bShape.width && (p_idx * GEMM_TILE_SIZE + ty) < bShape.height) {
 				Nds[ty][tx] = b[(p_idx * GEMM_TILE_SIZE + ty) * bShape.width + Col];
@@ -543,14 +513,11 @@ __global__ void gemmLayer_gpu(float* a, TensorShape aShape, float* b, TensorShap
 			else {
 				Nds[ty][tx] = 0.0f;
 			}
-
 			__syncthreads();
-
 			for (int k = 0; k < GEMM_TILE_SIZE; ++k) {
 				pVal += Mds[ty][k] * Nds[k][tx];
 			}
 			__syncthreads();
-
 		}
 		if (ty == 0 && Col < cShape.width) {
 			c[Row * cShape.width + Col] = pVal;
@@ -640,6 +607,88 @@ int evaluateGpuGemm_copy_speed(TensorShape aShape, TensorShape bShape,
 	return 0;
 }
 
+float* evaluateGpuGemm_copy_speed2(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
+
+	cShape.height = aShape.height;
+	cShape.width = bShape.width;
+	cShape.channels = aShape.channels;
+	cShape.count = BatchSize;
+
+	float* h_a = nullptr;
+	float* h_b = nullptr;
+
+	int retVal;
+	retVal = makeTensor(&h_a, aShape);
+	if (retVal != 0) {
+		std::cout << "Unable to make tensor \n";
+		//return -1;
+	}
+	retVal = makeTensor(&h_b, bShape);
+	if (retVal != 0) {
+		std::cout << "Unable to make tensor \n";
+		//return -1;
+	}
+
+	/*C (out) Array initialization*/
+	float* h_c = (float*)malloc(tensorSize(cShape) * sizeof(float));
+
+	/*CUDA Malloc for in, out, filter and bias*/
+
+	float* d_a, * d_b, * d_c;
+	cudaMalloc(&d_a, tensorSize(aShape) * sizeof(float));
+	cudaMalloc(&d_b, tensorSize(bShape) * sizeof(float));
+	cudaMalloc(&d_c, tensorSize(cShape) * sizeof(float));
+
+	/*CUDA Memcpy for in, filter and bias*/
+	cudaMemcpy(d_a, h_a, tensorSize(aShape) * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_b, h_b, tensorSize(bShape) * sizeof(float), cudaMemcpyHostToDevice);
+
+
+	/*Block and Grid Dims*/
+	dim3 blockDim(GEMM_TILE_SIZE, GEMM_TILE_SIZE);
+	dim3 gridDim((cShape.width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE, 1, cShape.count); // 128x1x3
+	size_t sharedMemSize = 2 * GEMM_TILE_SIZE * GEMM_TILE_SIZE * sizeof(float);
+
+	std::cout << "'Speed-up' COPY GPU Starting!\n";
+	cudaEvent_t start1, stop1;
+	cudaEventCreate(&start1); cudaEventCreate(&stop1);
+	cudaEventRecord(start1);
+	std::cout << "\tMemory Size: " << sharedMemSize << " Bytes! \n";
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_gpu_speed << <gridDim, blockDim, sharedMemSize >> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
+	//gemmLayer_gpu_v2 << <gridDim, blockDim >> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	cudaEventRecord(stop1);
+	cudaEventSynchronize(stop1);
+	float ms; cudaEventElapsedTime(&ms, start1, stop1);
+	std::cout << "'Speed-up' COPY Batch " << BatchSize << " Time: " << ms << " ms\n";
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		std::cout << "Kernel Launch Error: " << cudaGetErrorString(err) << "\n";
+	}
+	err = cudaDeviceSynchronize();
+	if (err != cudaSuccess) {
+		std::cout << "CUDA Error: " << cudaGetErrorString(err) << "\n";
+	}
+
+	cudaMemcpy(h_c, d_c, tensorSize(cShape) * sizeof(float), cudaMemcpyDeviceToHost);
+
+	/* cudaFree() functions */
+	cudaFree(d_a);
+	cudaFree(d_b);
+	cudaFree(d_c);
+
+	/*CPU Free*/
+	free(h_a);
+	free(h_b);
+	//free(h_c);
+
+	return h_c;
+}
+
 int evaluateGpuGemm_copy (TensorShape aShape, TensorShape bShape,
 	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
 
@@ -722,6 +771,87 @@ int evaluateGpuGemm_copy (TensorShape aShape, TensorShape bShape,
 	return 0;
 }
 
+float* evaluateGpuGemm_copy2(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
+
+	//cShape = { BatchSize, 1, 1, 4096 };
+
+	cShape.height = aShape.height;
+	cShape.width = bShape.width;
+	cShape.channels = aShape.channels;
+	cShape.count = BatchSize;
+
+	float* h_a = nullptr;
+	float* h_b = nullptr;
+
+	int retVal;
+	retVal = makeTensor(&h_a, aShape);
+	if (retVal != 0) {
+		std::cout << "Unable to make tensor \n";
+	//	return -1;
+	}
+	retVal = makeTensor(&h_b, bShape);
+	if (retVal != 0) {
+		std::cout << "Unable to make tensor \n";
+	//	return -1;
+	}
+
+	/*C (out) Array initialization*/
+	float* h_c = (float*)malloc(tensorSize(cShape) * sizeof(float));
+	/*CUDA Malloc for in, out, filter and bias*/
+	float* d_a, * d_b, * d_c;
+	cudaMalloc(&d_a, tensorSize(aShape) * sizeof(float));
+	cudaMalloc(&d_b, tensorSize(bShape) * sizeof(float));
+	cudaMalloc(&d_c, tensorSize(cShape) * sizeof(float));
+
+	/*CUDA Memcpy for in, filter and bias*/
+	cudaMemcpy(d_a, h_a, tensorSize(aShape) * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_b, h_b, tensorSize(bShape) * sizeof(float), cudaMemcpyHostToDevice);
+
+
+	/*Block and Grid Dims*/
+	dim3 blockDim(GEMM_TILE_SIZE, GEMM_TILE_SIZE);
+	dim3 gridDim((cShape.width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE, (cShape.height + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE);
+
+	std::cout << "'Basic' COPY GPU Starting!\n";
+	cudaEvent_t start1, stop1;
+	cudaEventCreate(&start1); cudaEventCreate(&stop1);
+	cudaEventRecord(start1);
+	//std::cout << "Memory Size: " << sharedMemSize << " Bytes! \n";
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_gpu << <gridDim, blockDim >> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
+
+	//gemmLayer_gpu_v2 << <gridDim, blockDim >> > (d_a, aShape, d_b, bShape, d_c, cShape);
+	cudaEventRecord(stop1);
+	cudaEventSynchronize(stop1);
+	float ms; cudaEventElapsedTime(&ms, start1, stop1);
+	std::cout << "'Basic' COPY Batch " << BatchSize << " Time: " << ms << " ms\n";
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		std::cout << "Kernel Launch Error: " << cudaGetErrorString(err) << "\n";
+	}
+	err = cudaDeviceSynchronize();
+	if (err != cudaSuccess) {
+		std::cout << "CUDA Error: " << cudaGetErrorString(err) << "\n";
+	}
+
+	cudaMemcpy(h_c, d_c, tensorSize(cShape) * sizeof(float), cudaMemcpyDeviceToHost);
+
+	/* cudaFree() functions */
+	cudaFree(d_a);
+	cudaFree(d_b);
+	cudaFree(d_c);
+
+	/*CPU Free*/
+	free(h_a);
+	free(h_b);
+
+	return h_c;
+}
+
 int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
 
@@ -756,7 +886,7 @@ int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 	/*Block and Grid Dims*/
 	dim3 blockDim(GEMM_TILE_SIZE, GEMM_TILE_SIZE);
 	dim3 gridDim((cShape.width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE, 1, cShape.count);
-	
+	size_t sharedMemSize = 2 * GEMM_TILE_SIZE * GEMM_TILE_SIZE * sizeof(float);
 
 	/*gpuGemm Kernel Call*/
 	std::cout << "UVM GPU Starting!\n";
@@ -764,7 +894,7 @@ int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 	cudaEventCreate(&start1); cudaEventCreate(&stop1);
 	cudaEventRecord(start1);
 	auto start = std::chrono::high_resolution_clock::now();
-	gemmLayer_gpu_v2 << <gridDim, blockDim >> > (uvm_a, aShape, uvm_b, bShape, uvm_c, cShape);
+	gemmLayer_gpu_v2 << <gridDim, blockDim, sharedMemSize >> > (uvm_a, aShape, uvm_b, bShape, uvm_c, cShape);
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> elapsed = end - start;
 	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
@@ -780,11 +910,75 @@ int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 	if (err != cudaSuccess) {
 		std::cout << "CUDA Error: " << cudaGetErrorString(err) << "\n";
 	}
+	
 	cudaFree(uvm_a);
 	cudaFree(uvm_b);
 	cudaFree(uvm_c);
 	return 0;
 }
 
+float* evaluateGpuGemm_uvm2(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
+
+	//cShape = { BatchSize, 1, 1, 4096 };
+
+	cShape.height = aShape.height;
+	cShape.width = bShape.width;
+	cShape.channels = aShape.channels;
+	cShape.count = BatchSize;
+
+	float* uvm_a = nullptr;
+	float* uvm_b = nullptr;
+	float* uvm_c = nullptr;
+
+	/*CUDA UVM Babyyy*/
+	cudaMallocManaged(&uvm_a, aShape.count * aShape.width * sizeof(float));
+	cudaMallocManaged(&uvm_b, bShape.height * bShape.width * sizeof(float));
+	cudaMallocManaged(&uvm_c, cShape.count * cShape.width * sizeof(float));
+
+	int retVal;
+	retVal = makeTensor_uvm(&uvm_a, aShape);
+	if (retVal != 0) {
+		std::cout << "Unable to make tensor \n";
+		//return -1;
+	}
+	retVal = makeTensor_uvm(&uvm_b, bShape);
+	if (retVal != 0) {
+		std::cout << "Unable to make tensor \n";
+		//return 99;
+	}
+
+	/*Block and Grid Dims*/
+	dim3 blockDim(GEMM_TILE_SIZE, GEMM_TILE_SIZE);
+	dim3 gridDim((cShape.width + GEMM_TILE_SIZE - 1) / GEMM_TILE_SIZE, 1, cShape.count);
+	size_t sharedMemSize = 2 * GEMM_TILE_SIZE * GEMM_TILE_SIZE * sizeof(float);
+
+	/*gpuGemm Kernel Call*/
+	std::cout << "UVM GPU Starting!\n";
+	cudaEvent_t start1, stop1;
+	cudaEventCreate(&start1); cudaEventCreate(&stop1);
+	cudaEventRecord(start1);
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_gpu_v2 << <gridDim, blockDim, sharedMemSize >> > (uvm_a, aShape, uvm_b, bShape, uvm_c, cShape);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "GPU execution time: " << elapsed.count() << " seconds\n";
+	cudaEventRecord(stop1);
+	cudaEventSynchronize(stop1);
+	float ms; cudaEventElapsedTime(&ms, start1, stop1);
+	std::cout << "UVM Batch " << BatchSize << " Time: " << ms << " ms\n";
+	cudaError_t err = cudaGetLastError();
+	if (err != cudaSuccess) {
+		std::cout << "Kernel Launch Error: " << cudaGetErrorString(err) << "\n";
+	}
+	err = cudaDeviceSynchronize();
+	if (err != cudaSuccess) {
+		std::cout << "CUDA Error: " << cudaGetErrorString(err) << "\n";
+	}
+
+	cudaFree(uvm_a);
+	cudaFree(uvm_b);
+	return uvm_c;
+}
 
 //	STUDENT: Add functions here (No)

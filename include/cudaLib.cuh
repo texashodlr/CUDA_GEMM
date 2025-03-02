@@ -238,10 +238,19 @@
 	extern int evaluateGpuGemm_copy(TensorShape aShape, TensorShape bShape,
 		TensorShape & cShape, GemmLayerArgs args, uint32_t BatchSize);
 
+	extern float* evaluateGpuGemm_copy2(TensorShape aShape, TensorShape bShape,
+		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
+
 	extern int evaluateGpuGemm_copy_speed(TensorShape aShape, TensorShape bShape,
+		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
+
+	extern float* evaluateGpuGemm_copy_speed2(TensorShape aShape, TensorShape bShape,
 		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
 
 	extern int evaluateGpuGemm_uvm(TensorShape aShape, TensorShape bShape,
 		TensorShape & cShape, GemmLayerArgs args, uint32_t BatchSize);
+
+	extern float* evaluateGpuGemm_uvm2(TensorShape aShape, TensorShape bShape,
+		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
 
 #endif

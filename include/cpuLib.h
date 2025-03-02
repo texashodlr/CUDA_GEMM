@@ -24,6 +24,7 @@
 	extern void vectorInit(float* v, int size);
 	extern int verifyVector(float* a, float* b, float* c, float scale, int size);
 	extern int verifyVector_convLayer(float* a, float* b, int size);
+	extern int verifyVector_gemm(float* a, float* b, float* c, int size);
 	extern void printVector(float* v, int size);
 	
 	extern void saxpy_cpu(float* x, float* y, float scale, uint64_t size);
@@ -196,7 +197,10 @@
 		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
 
 	extern int executeCpuGemm_v2(TensorShape aShape, TensorShape bShape,
-		TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize);
+		TensorShape& cShape, GemmLayerArgs args);
+
+	extern float* executeCpuGemm_v3(TensorShape aShape, TensorShape bShape,
+		TensorShape& cShape, GemmLayerArgs args);
 
 	extern int gemmLayer_cpu (float * a, TensorShape aShape,
 		float * b, TensorShape bShape, float * c, TensorShape & cShape,

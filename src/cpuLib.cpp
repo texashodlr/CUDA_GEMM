@@ -39,11 +39,26 @@ int verifyVector_convLayer(float* a, float* b, int size) {
 		float delta = a[idx] - b[idx];
 		if (abs(delta) > tolerance) {
 			++errorCount;
-			//std::cout << "Idx " << idx << " expected (CPU):  " << a[idx] << " found (GPU):" << b[idx] << " Delta: " << abs(delta) << "\n";
+			std::cout << "Idx " << idx << " expected (CPU):  " << a[idx] << " found (GPU):" << b[idx] << " Delta: " << abs(delta) << "\n";
 		}
 		if (idx >= 0 && idx < 20) {
 			/*Range of IDX Checking*/
 			//std::cout << "Idx " << idx << " expected (CPU):  " << a[idx] << " found (GPU):" << b[idx] << "\n";
+		}
+	}
+	return errorCount;
+}
+
+int verifyVector_gemm(float* a, float* b, float* c, int size) {
+	float tolerance = 0.01f;
+	int errorCount = 0;
+	for (int idx = 0; idx < size; ++idx) {
+		float delta = a[idx] - b[idx];
+		float delta2 = a[idx] - c[idx];
+		float delta3 = b[idx] - c[idx];
+		if (abs(delta) > tolerance || abs(delta2) > tolerance || abs(delta3) > tolerance) {
+			++errorCount;
+			std::cout << "Idx " << idx << " expected (CPU):  " << a[idx] << " found (GPU):" << b[idx] << " Delta: " << abs(delta) << "\n";
 		}
 	}
 	return errorCount;
@@ -666,14 +681,13 @@ void matMulNaiveCpu (int N, int *a, int *b, int *c) {
 
 int runCpuGemm (int argc, char ** argv) {
 
-	for (uint32_t BatchSize = 1; BatchSize < 4; ++BatchSize) {
-		TensorShape aShape = { BatchSize, 1, 1, 4096 };
-		TensorShape bShape = { 1, 1, 4096, 4096 };
-		TensorShape cShape;
-		GemmLayerArgs args = { 2, 2, 1 };
-		std::cout << "Executing GEMM with BatchSize: " << BatchSize << "\n";
-		executeCpuGemm_v2(aShape, bShape, cShape, args, BatchSize);
-	}
+	uint32_t BatchSize = 3;
+	TensorShape aShape = { BatchSize, 1, 1, 4096 };
+	TensorShape bShape = { 1, 1, 4096, 4096 };
+	TensorShape cShape;
+	GemmLayerArgs args = { 2, 2, 1 };
+	std::cout << "Executing GEMM with BatchSize: " << BatchSize << "\n";
+	executeCpuGemm_v2(aShape, bShape, cShape, args);
 	return 0;
 }
 int runCpuGemm1(int argc, char** argv) {
@@ -748,6 +762,7 @@ int executeCpuGemm(TensorShape aShape, TensorShape bShape,
 	std::chrono::duration<double> elapsed = end - start;
 	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
 
+
 	return 0;
 }
 
@@ -804,14 +819,13 @@ int gemmLayer_cpu (float * a, TensorShape aShape,
 	return 0;
 }
 
-
-int executeCpuGemm_v2(TensorShape aShape, TensorShape bShape,
-	TensorShape& cShape, GemmLayerArgs args, uint32_t BatchSize) {
+float* executeCpuGemm_v3(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args) {
 
 	cShape.height = aShape.height;
 	cShape.width = bShape.width;
 	cShape.channels = aShape.channels;
-	cShape.count = BatchSize;
+	cShape.count = aShape.count;
 
 	float* a = nullptr;
 	float* b = nullptr;
@@ -827,7 +841,43 @@ int executeCpuGemm_v2(TensorShape aShape, TensorShape bShape,
 	std::chrono::duration<double> elapsed = end - start;
 	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
 
+	free(a);
+	free(b);
+
+	return c;
+
+
+}
+
+int executeCpuGemm_v2(TensorShape aShape, TensorShape bShape,
+	TensorShape& cShape, GemmLayerArgs args) {
+
+	cShape.height = aShape.height;
+	cShape.width = bShape.width;
+	cShape.channels = aShape.channels;
+	cShape.count = aShape.count;
+
+	float* a = nullptr;
+	float* b = nullptr;
+
+	makeTensor(&a, aShape);
+	makeTensor(&b, bShape);
+
+	float* c = (float*)malloc(tensorSize(cShape) * sizeof(float));
+
+	auto start = std::chrono::high_resolution_clock::now();
+	gemmLayer_cpu_batchsize(a, aShape, b, bShape, c, cShape, args);
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> elapsed = end - start;
+	std::cout << "CPU execution time: " << elapsed.count() << " seconds\n";
+
+	free(a);
+	free(b);
+	free(c);
+
 	return 0;
+
+	
 }
 
 int gemmLayer_cpu_batchsize(float* a, TensorShape aShape,
